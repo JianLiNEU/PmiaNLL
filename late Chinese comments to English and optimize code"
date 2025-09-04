@@ -1,0 +1,1127 @@
+[1mdiff --git a/privacy_risks_evaluations/config.py b/privacy_risks_evaluations/config.py[m
+[1mindex 58da094..336d0a3 100644[m
+[1m--- a/privacy_risks_evaluations/config.py[m
+[1m+++ b/privacy_risks_evaluations/config.py[m
+[36m@@ -4,7 +4,7 @@[m [mimport  argparse[m
+ def parser_setting():  [m
+       # Training settings[m
+     parser = argparse.ArgumentParser(description='This is the official implementation for the ICML 2019 Unsupervised label noise modeling and loss correction paper. This work is under MIT licence. Please refer to the RunScripts.sh and README.md files for example usages. Consider citing our work if this code is usefull for your project')[m
+[31m-    parser.add_argument('--root-dir', type=str, default='/home/guest100/data/', help='path to CIFAR dir where cifar-10-batches-py/ and cifar-100-python/ are located. If the datasets are not downloaded, they will automatically be and extracted to this path, default: .')[m
+[32m+[m[32m    parser.add_argument('--root-dir', type=str, default='/home/yinsi_team/guest_yinsi/data/', help='path to CIFAR dir where cifar-10-batches-py/ and cifar-100-python/ are located. If the datasets are not downloaded, they will automatically be and extracted to this path, default: .')[m
+     parser.add_argument('--batch-size', type=int, default=100,[m
+                         help='input batch size for training, default: 128')[m
+     parser.add_argument('--test-batch-size', type=int, default=256,[m
+[36m@@ -41,6 +41,7 @@[m [mdef parser_setting():[m
+     # poisoning membership inference setting[m
+     parser.add_argument('--target_class', type=int, default=0,  help="only select a target classes")[m
+     parser.add_argument('--poison_strategy',  type=str, default="target", help="all and target")[m
+[32m+[m[32m    parser.add_argument('--label_type',  type=str, default="dirty_label", help="all and target")[m
+ [m
+     parser.add_argument('--attack_train_amount', type=int, default=500, help="attack train samples")[m
+     parser.add_argument('--attack_test_amount',  type=int, default=500, help="attack test samples")[m
+[36m@@ -53,7 +54,14 @@[m [mdef parser_setting():[m
+                         help='["gaussian, bert"] use different distribution to model the clean and dirty point.')[m
+     parser.add_argument('--synthemic_samples', type=int, default=0, [m
+                         help='If 1, implement the Poisoning mmebership inference attacks of NDSS 2025')[m
+[31m-    [m
+[32m+[m
+[32m+[m
+[32m+[m[32m    #   LIRA setting attack[m
+[32m+[m
+[32m+[m[32m    parser.add_argument('--pkeep', type=float, default=0.7, help='Probability to keep examples.')[m
+[32m+[m[32m    parser.add_argument('--num_experiments', type=int, default=16, help='Number of shadow model')[m
+[32m+[m[32m    parser.add_argument('--experiments', type=int, default=0, help='the shadow model id ')[m
+[32m+[m
+     args = parser.parse_args()[m
+ [m
+ [m
+[1mdiff --git a/train.py b/train.py[m
+[1mindex a786e19..6ff3288 100644[m
+[1m--- a/train.py[m
+[1m+++ b/train.py[m
+[36m@@ -60,14 +60,13 @@[m [mdef main():[m
+ [m
+     [m
+     if args.poison_strategy=="all":[m
+[31m-        noisy_labels, idxs_to_change = add_noise_cifar_wo(trainset, args.noise_level, args.dataset)  # Directly modify labels in train_loader[m
+[32m+[m[32m        noisy_labels, idxs_to_change = add_noise_cifar_wo(trainset, args.noise_level, args.dataset)  # it changes the labels in the train loader directly, 直接改变的train_loader中的label[m
+         noisy_labels_track, idxs_to_change_track = add_noise_cifar_wo(trainset_track, args.noise_level, args.dataset)[m
+     else:[m
+[31m-        # Poison specific target class[m
+[31m-        noisy_labels, idxs_to_change = poisoned_target_class(trainset, args.target_class, args.noise_level, args.dataset,attack_type=args.attack_type)  # Directly modify labels in train_loader[m
+[31m-        noisy_labels_track, idxs_to_change_track = poisoned_target_class(trainset_track,  args.target_class, args.noise_level, args.dataset,attack_type=args.attack_type)[m
+[32m+[m[41m      [m
+[32m+[m[32m        noisy_labels, idxs_to_change = poisoned_target_class(trainset, args.target_class, args.noise_level, args.dataset, args.label_type, args.device)  # it changes the labels in the train loader directly, 直接改变的train_loader中的label[m
+[32m+[m[32m        noisy_labels_track, idxs_to_change_track = poisoned_target_class(trainset_track,  args.target_class, args.noise_level, args.dataset, args.label_type, args.device)[m
+ [m
+[31m-  [m
+ [m
+     clean_trainloader=torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True, num_workers=1, pin_memory=True)[m
+     train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=1, pin_memory=True)[m
+[36m@@ -123,7 +122,7 @@[m [mdef main():[m
+     bootstrap_ep_std = milestones[0] + 5 + 1  # the +1 is because the conditions are defined as ">" or "<" not ">="[m
+ [m
+ [m
+[31m-    guidedMixup_ep =1[m
+[32m+[m[32m    guidedMixup_ep =105[m
+   [m
+     if args.defence_method=="dp":[m
+         from opacus import PrivacyEngine[m
+[1mdiff --git a/utils.py b/utils.py[m
+[1mindex 27321a9..aad48b2 100644[m
+[1m--- a/utils.py[m
+[1m+++ b/utils.py[m
+[36m@@ -1,4 +1,3 @@[m
+[31m-from __future__ import print_function[m
+ import os[m
+ import argparse[m
+ import torch[m
+[36m@@ -17,7 +16,8 @@[m [mimport sys[m
+ from tqdm import tqdm[m
+ from sklearn.decomposition import PCA[m
+ [m
+[31m-import NDSS_2025_facilitate_PMIA as syn[m
+[32m+[m
+[32m+[m
+ ######################### Get data and noise adding ##########################[m
+ def get_data_cifar(loader):[m
+     data = loader.sampler.data_source.train_data.copy()[m
+[36m@@ -70,11 +70,11 @@[m [mdef add_noise_cifar_wo(loader, noise_percentage = 20, dataset_name="cifar10"):[m
+ #Noise with the sample class (as in Re-thinking generalization )[m
+ def add_noise_cifar_w(loader, noise_percentage = 20, dataset_name="cifar10"):[m
+     """[m
+[31m-        基于random随机选择label[m
+[31m-        基于label的投毒样本的选择[m
+[32m+[m[32m        Random label selection based on random[m
+[32m+[m[32m        Selection of poisoned samples based on labels[m
+     """[m
+     [m
+[31m-    torch.manual_seed(2) #固定seed[m
+[32m+[m[32m    torch.manual_seed(2) # Fix random seed[m
+     np.random.seed(42)[m
+     if dataset_name=="stl10":[m
+         noisy_labels = [sample_i for sample_i in loader.labels][m
+[36m@@ -83,11 +83,11 @@[m [mdef add_noise_cifar_w(loader, noise_percentage = 20, dataset_name="cifar10"):[m
+         noisy_labels = [sample_i for sample_i in loader.targets][m
+         images = [sample_i for sample_i in loader.data][m
+ [m
+[31m-    probs_to_change = torch.randint(100, (len(noisy_labels),))#随机选择一个数0-100 对于每个图片[m
+[31m-    idx_to_change = probs_to_change >= (100.0 - noise_percentage)# 当这个数大于80时，就改变这个图片的label[m
+[32m+[m[32m    probs_to_change = torch.randint(100, (len(noisy_labels),))# Randomly select a number 0-100 for each image[m
+[32m+[m[32m    idx_to_change = probs_to_change >= (100.0 - noise_percentage)# When this number is greater than 80, change the label of this image[m
+     percentage_of_bad_labels = 100 * (torch.sum(idx_to_change).item() / float(len(noisy_labels)))[m
+     for n, label_i in enumerate(noisy_labels):[m
+[31m-        if idx_to_change[n] == 1: #如果这个图片的label要改变[m
+[32m+[m[32m        if idx_to_change[n] == 1: # If the label of this image needs to be changed[m
+             set_labels = list(set(range(10)))  # this is a set with the available labels (with the current label)[m
+             set_index = np.random.randint(len(set_labels))[m
+             noisy_labels[n] = set_labels[set_index][m
+[36m@@ -101,8 +101,26 @@[m [mdef add_noise_cifar_w(loader, noise_percentage = 20, dataset_name="cifar10"):[m
+     return noisy_labels[m
+ [m
+ [m
+[32m+[m[32mdef get_lira_dataset(images, labels, num_experiments, expid, pkeep, seed=10014):[m
+[32m+[m
+[32m+[m[32m    np.random.seed(seed)[m
+[32m+[m[32m    if num_experiments is not None:[m
+[32m+[m[32m        keep = np.random.uniform(0, 1, size=(num_experiments, len(images)))[m
+[32m+[m[32m        order = keep.argsort(0)[m
+[32m+[m[32m        keep = order < int(pkeep * num_experiments)[m
+[32m+[m[32m        keep = np.array(keep[expid], dtype=bool)[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        keep = np.random.uniform(0, 1, size=len(images)) <= pkeep[m
+[32m+[m[32m    unkeep=~keep[m
+[32m+[m[32m    reference_train_x_set = images[keep][m
+[32m+[m[32m    reference_train_y_set = labels[keep][m
+[32m+[m[32m    reference_test_x_set = images[unkeep][m
+[32m+[m[32m    reference_test_y_set = labels[unkeep][m
+[32m+[m[32m    print(f"Training dataset size: {len(reference_train_x_set)} and test dataset size: {len(reference_test_x_set)}")[m
+[32m+[m
+[32m+[m[32m    return reference_train_x_set, reference_train_y_set, reference_test_x_set, reference_test_y_set, keep[m
+ [m
+[31m-def poisoned_target_class(loader, target_class, noise_level,dataset_name):[m
+[32m+[m[32mdef poisoned_target_class(loader, target_class, noise_level, dataset_name, label_type="dirty_label", device="cpu",  lira=False, num_experiments=16, model_id=1,save_dir="./"):[m
+     """[m
+         poisoning membership inference attacks against poisoned models with special target class [m
+ [m
+[36m@@ -113,30 +131,89 @@[m [mdef poisoned_target_class(loader, target_class, noise_level,dataset_name):[m
+     else:[m
+         noisy_labels = [sample_i for sample_i in loader.targets][m
+         images = [sample_i for sample_i in loader.data][m
+[32m+[m[41m        [m
+     num_samples=int(noise_level*len(images)/100)[m
+[31m-    print("Noise samples in trianing : ", num_samples)[m
+ [m
+     sample_i=0[m
+     label_range = np.unique(noisy_labels)[m
+     idxs_to_change=[][m
+ [m
+[31m- [m
+[31m-    for n, label_i in enumerate(noisy_labels):[m
+[31m-        if sample_i<num_samples and label_i==target_class:[m
+[31m-            label_range = label_range[np.where(label_range != target_class)][m
+[31m-            poison_label = np.random.choice(label_range)[m
+[31m-            noisy_labels[n] = poison_label[m
+[31m-            sample_i+=1[m
+[31m-            idxs_to_change.append(1)[m
+[31m-        else:[m
+[31m-            idxs_to_change.append(0)[m
+[32m+[m[32m    if label_type=="dirty_label":[m
+[32m+[m[32m        print("dirty label poisoning attack:", device)[m
+[32m+[m[32m        for n, label_i in enumerate(noisy_labels):[m
+[32m+[m[32m            if sample_i<num_samples and label_i==target_class:[m
+[32m+[m[32m                label_range = label_range[np.where(label_range != target_class)][m
+[32m+[m[32m                poison_label = np.random.choice(label_range)[m
+[32m+[m[32m                noisy_labels[n] = poison_label[m
+[32m+[m[32m                sample_i+=1[m
+[32m+[m[32m                idxs_to_change.append(1)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                idxs_to_change.append(0)[m
+[32m+[m[32m        print("Noise samples in training : ", np.sum(idxs_to_change))[m
+[32m+[m[41m        [m
+[32m+[m[41m        [m
+[32m+[m[32m        if lira:[m
+[32m+[m[32m            """[m
+[32m+[m[32m                1. First remove the poisoned samples and find the remaining clean samples[m
+[32m+[m[32m                2. Select training dataset samples based on clean samples[m
+[32m+[m[32m                3.[m
+[32m+[m[41m            [m
+[32m+[m[32m            """[m
+[32m+[m[32m            poison_images=np.array(images)[np.array(idxs_to_change,dtype=bool)][m
+[32m+[m[32m            poison_labels=np.array(noisy_labels)[np.array(idxs_to_change,dtype=bool)][m
+[32m+[m[32m            reversed_images=np.array(images)[~np.array(idxs_to_change,dtype=bool)][m
+[32m+[m[32m            reversed_labels=np.array(noisy_labels)[~np.array(idxs_to_change,dtype=bool)][m
+[32m+[m[32m            reversed_keep=np.arange(len(images))[~np.array(idxs_to_change,dtype=bool)][m
+[32m+[m[41m            [m
+[32m+[m[41m            [m
+[32m+[m[41m            [m
+[32m+[m[32m            if noise_level==0:[m
+[32m+[m[32m                target_images=np.array(images)[np.array(noisy_labels)==target_class][m
+[32m+[m[32m                target_labels=np.array(noisy_labels)[np.array(noisy_labels)==target_class][m
+[32m+[m[32m                reversed_images=np.array(images)[np.array(noisy_labels)!=target_class][m
+[32m+[m[32m                reversed_labels=np.array(noisy_labels)[np.array(noisy_labels)!=target_class][m
+[32m+[m[32m                reversed_keep=np.arange(len(reversed_images))[m
+[32m+[m[32m                train_x_set, train_y_set, test_x_set, test_y_set, keep=get_lira_dataset(reversed_images,reversed_labels,num_experiments=num_experiments, expid=model_id,pkeep=0.7)[m
+[32m+[m[32m                final_keep = reversed_keep[keep][m
+[32m+[m[32m                final_train_data=np.concatenate((target_images[-2000:],train_x_set),axis=0)[m
+[32m+[m[32m                final_train_labels=np.concatenate((target_labels[-2000:],train_y_set),axis=0)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                train_x_set, train_y_set, test_x_set, test_y_set, keep=get_lira_dataset(reversed_images,reversed_labels,num_experiments=num_experiments, expid=model_id,pkeep=0.7)[m
+[32m+[m[32m                final_keep = reversed_keep[keep][m
+[32m+[m[32m                final_train_data=np.concatenate((poison_images,train_x_set),axis=0)[m
+[32m+[m[32m                final_train_labels=np.concatenate((poison_labels,train_y_set),axis=0)[m
+[32m+[m[41m        [m
+[32m+[m[41m            [m
+[32m+[m[32m            loader.data = np.array(final_train_data)[m
+[32m+[m[32m            loader.targets = np.array(final_train_labels)[m
+[32m+[m[32m            save_data(save_dir,final_keep,f"keep_{model_id}")[m
+[32m+[m[32m            save_data(save_dir,idxs_to_change,f"poison_{model_id}")[m
+[32m+[m[32m            return poison_labels, np.array(idxs_to_change)[np.array(idxs_to_change,dtype=bool)][m
+[32m+[m[41m        [m
+[32m+[m[41m        [m
+[32m+[m[32m    elif label_type=="clean_label":[m
+[32m+[m[32m        print("clean label poisoning attack: ")[m
+[32m+[m[32m        from privacy_risks_evaluations import clean_label_crafting[m
+[32m+[m[32m        poison_x, poison_y=clean_label_crafting.clean_label_attack("resnet50", target_class,[images,noisy_labels],num_samples, num_samples, device=device)[m
+[32m+[m[32m        print("Noise samples in trianing : ", np.shape(poison_x), np.shape(images), len(poison_x))[m
+[32m+[m[32m        for n, label_i in enumerate(noisy_labels):[m
+[32m+[m[32m            if sample_i<num_samples and label_i==target_class:[m
+[32m+[m[32m                images[n] =poison_x[sample_i][m
+[32m+[m[32m                noisy_labels[n] = poison_y[sample_i][m
+[32m+[m[32m                sample_i+=1[m
+[32m+[m[32m                idxs_to_change.append(1)[m
+[32m+[m[32m            else:[m
+[32m+[m[32m                idxs_to_change.append(0)[m
+[32m+[m[41m                [m
+[32m+[m[41m                [m
+     if dataset_name=="stl10":[m
+         loader.data = np.array(images)[m
+         loader.labels=np.array(noisy_labels)[m
+     else:[m
+         loader.data = images[m
+         loader.targets=noisy_labels[m
+[31m-    [m
+[32m+[m[41m        [m
+[32m+[m[41m        [m
+     return noisy_labels, idxs_to_change[m
+ [m
+ [m
+[36m@@ -152,7 +229,7 @@[m [mdef poisoned_target_class(loader, target_class, noise_level,dataset_name):[m
+ ##################### Loss tracking and noise modeling #######################[m
+ [m
+ [m
+[31m-def track_training_loss(args, model, device, train_loader, epoch, bmm_model1, bmm_model_maxLoss1, bmm_model_minLoss1, idxs_to_change_track, save_dir, distribution="gaussian",cuda="cuda", GPU_version=True):[m
+[32m+[m[32mdef track_training_loss(args, model, device, train_loader, epoch, bmm_model1, bmm_model_maxLoss1, bmm_model_minLoss1, idxs_to_change_track, save_dir, distribution="gaussian",cuda="cuda", GPU_version=False,save_possibility=True):[m
+     model.eval()[m
+ [m
+     all_losses = torch.Tensor()[m
+[36m@@ -178,40 +255,38 @@[m [mdef track_training_loss(args, model, device, train_loader, epoch, bmm_model1, bm[m
+         # arg_entr = F.nll_loss(prediction.float(), arg_entr.to(device), reduction='none')[m
+         # arg_entr.detach_()[m
+         # all_argmaxXentropy = torch.cat((all_argmaxXentropy, arg_entr.cpu()))[m
+[31m-        # the middle result of the model output-- jian li[m
+[32m+[m[32m        # The middle result of the model output[m
+ [m
+[31m-        mid_inter=model(data, lin=0, lout=5)[m
+[32m+[m[32m        mid_inter=model(data, lin=0, lout=6)[m
+         mid_inter.detach_()[m
+         all_mid_inter=torch.cat((all_mid_inter, mid_inter.cpu()))[m
+ [m
+     loss_tr = all_losses.data.numpy()[m
+     import copy[m
+[31m-    original_loss=copy.deepcopy(loss_tr) #用于画图[m
+[32m+[m[32m    original_loss=copy.deepcopy(loss_tr) # For plotting[m
+     # outliers detection[m
+[31m-    #jianli[m
+[31m-    [m
+[32m+[m[32m    # Initialize[m
+     if distribution=="gaussian":[m
+         print("train model with gaussian mixture distribution: ")[m
+         all_mid_inter = np.nan_to_num(all_mid_inter, nan=0.0, posinf=0.0, neginf=0.0)[m
+         bmm_model_min = np.min(all_mid_inter)[m
+         bmm_model_max = np.max(all_mid_inter)[m
+         normalized_all_mid_inter = (all_mid_inter - bmm_model_min) / (bmm_model_max -  bmm_model_min+1e-6)[m
+[31m-        print("the min value: ", np.min(normalized_all_mid_inter))[m
+[31m-        print("the max value: ", np.max(normalized_all_mid_inter))[m
+[31m-        bmm_model=GMM_mixture2D(n_components=2, max_iter=1000, cuda=cuda,  GPU_version=GPU_version)[m
+[32m+[m[32m        normalized_all_mid_inter =  normalized_all_mid_inter.reshape(len(normalized_all_mid_inter), -1)[m
+[32m+[m[41m        [m
+[32m+[m[32m        bmm_model=GMM_mixture2D(n_components=2, max_iter=1000, cuda=cuda)[m
+         bmm_model.fit(normalized_all_mid_inter, original_loss)[m
+ [m
+[31m-        #用于画图[m
+[31m-        save_possibility=True[m
+[31m-        if epoch%10==0 and save_possibility:[m
+[31m-            normalized_all_mid_inter =  normalized_all_mid_inter.reshape(len(normalized_all_mid_inter), -1)[m
+[32m+[m[32m        # For plotting[m
+[32m+[m[41m        [m
+[32m+[m[32m        if epoch%5==0 and save_possibility:[m
+             if GPU_version:[m
+                 normalized_all_mid_inter=torch.from_numpy(normalized_all_mid_inter).float().to(cuda)[m
+             if bmm_model.return_id==1:[m
+[31m-                post_possibility=bmm_model.posterior(normalized_all_mid_inter,1)[m
+[32m+[m[32m                post_possibility=bmm_model.posterior(normalized_all_mid_inter, 1)[m
+             else:[m
+[31m-                post_possibility=bmm_model.posterior(normalized_all_mid_inter,0)[m
+[31m-            post_possibility = np.nan_to_num(post_possibility, nan=0.0, posinf=0.0, neginf=0.0)[m
+[32m+[m[32m                post_possibility=bmm_model.posterior(normalized_all_mid_inter, 0)[m
+[32m+[m[32m            # post_possibility = np.nan_to_num(post_possibility, nan=0.0, posinf=0.0, neginf=0.0)[m
+             bmm_model.plot_possibility(post_possibility, idxs_to_change_track, epoch, save_dir)[m
+ [m
+     else:[m
+[36m@@ -219,44 +294,47 @@[m [mdef track_training_loss(args, model, device, train_loader, epoch, bmm_model1, bm[m
+ [m
+         max_perc = np.percentile(loss_tr, 95)[m
+         min_perc = np.percentile(loss_tr, 5)[m
+[31m-        loss_tr = loss_tr[(loss_tr<=max_perc) & (loss_tr>=min_perc)] #过滤掉 outlier 小于min 大于max 的值[m
+[32m+[m[32m        loss_tr = loss_tr[(loss_tr<=max_perc) & (loss_tr>=min_perc)] # Filter out outliers with values less than min and greater than max[m
+         [m
+         bmm_model_max = torch.FloatTensor([max_perc]).to(device)[m
+         bmm_model_min = torch.FloatTensor([min_perc]).to(device) + 10e-6[m
+ [m
+[31m-        #归一化[m
+[32m+[m[32m        # Normalization[m
+         loss_tr = (loss_tr - bmm_model_min.data.cpu().numpy()) / (bmm_model_max.data.cpu().numpy() - bmm_model_min.data.cpu().numpy() + 1e-6)[m
+         loss_tr[loss_tr>=1] = 1-10e-4[m
+         loss_tr[loss_tr <= 0] = 10e-4[m
+ [m
+[31m-        bmm_model = BetaMixture1D(max_iters=10)[m
+[32m+[m[32m        bmm_model = BetaMixture1D(max_iters=20)[m
+         bmm_model.fit(loss_tr)[m
+[31m-        bmm_model.create_lookup(1) #通常用于创建一个查找表（lookup table），该查找表可以用于快速访问某些预计算的值或结果。[m
+[32m+[m[32m        bmm_model.create_lookup(1) # Usually used to create a lookup table that can be used to quickly access some pre-computed values or results.[m
+ [m
+[31m-        #用于画图[m
+[32m+[m[32m        # For plotting[m
+         save_possibility=True[m
+[31m-        if epoch%10==0 and save_possibility:[m
+[31m-            original_loss=original_loss[m
+[31m-            min_original_loss=np.min(original_loss)[m
+[31m-            max_original_loss=np.max(original_loss)[m
+[31m-            original_loss = (original_loss - min_original_loss) / ( max_original_loss-min_original_loss+ 1e-6)[m
+[32m+[m[32m        if epoch%5==0 and save_possibility:[m
+[32m+[m[32m            # ori_min=np.min(original_loss)[m
+[32m+[m[32m            # ori_max=np.max(original_loss)[m
+[32m+[m[32m            # original_loss = (original_loss - ori_min) / (ori_max - ori_min + 1e-6)[m
+[32m+[m[32m            original_loss = (original_loss- bmm_model_min.data.cpu().numpy()) / (bmm_model_max.data.cpu().numpy() - bmm_model_min.data.cpu().numpy() + 1e-6)[m
+[32m+[m[32m            original_loss [original_loss >=1] = 1-10e-4[m
+[32m+[m[32m            original_loss [original_loss <= 0] = 10e-4[m
+             post_possibility=bmm_model.post_predict(original_loss)[m
+[31m-            post_possibility = np.nan_to_num(post_possibility, nan=0.0, posinf=0.0, neginf=0.0)[m
+[32m+[m[32m            # post_possibility = np.nan_to_num(post_possibility, nan=0.0, posinf=0.0, neginf=0.0)[m
+[32m+[m[41m            [m
+             bmm_model.plot_possibility(post_possibility, idxs_to_change_track, epoch, save_dir)[m
+ [m
+     [m
+[31m-    # 计算属于第二个分布的 训练数据的数目：[m
+[32m+[m[32m    # Calculate the number of training data belonging to the second distribution:[m
+     [m
+[31m-    # print("训练数据中属于数据分布2的数据数量: {}".format(np.sum(bmm_model.predict(loss_tr))),"比值：{}".format(np.sum(bmm_model.predict(loss_tr))/(len(loss_tr))))[m
+[32m+[m[32m    # print("Number of training data belonging to distribution 2: {}".format(np.sum(bmm_model.predict(loss_tr))),"Ratio: {}".format(np.sum(bmm_model.predict(loss_tr))/(len(loss_tr))))[m
+ [m
+ [m
+[31m-    # 画出分布图，clean label 和dirty label的loss分布图 jianli[m
+[32m+[m[32m    # Plot distribution graph, loss distribution of clean label and dirty label[m
+     # [m
+     # original_loss=original_loss.numpy()[m
+     # min_original_loss=np.min(original_loss)[m
+     # max_original_loss=np.max(original_loss)[m
+     # original_loss = (original_loss - min_original_loss) / ( max_original_loss-min_original_loss+ 1e-6)[m
+[31m-    # original_loss=(original_loss-bmm_model_minLoss.data.cpu().numpy())/ (bmm_model_maxLoss.data.cpu().numpy() - bmm_model_minLoss.data.cpu().numpy() + 1e-6) #用于画图[m
+[32m+[m[32m    # original_loss=(original_loss-bmm_model_minLoss.data.cpu().numpy())/ (bmm_model_maxLoss.data.cpu().numpy() - bmm_model_minLoss.data.cpu().numpy() + 1e-6) # For plotting[m
+     # bmm_model.plot(original_loss, idxs_to_change_track, epoch, save_dir)[m
+ [m
+ [m
+[36m@@ -292,6 +370,7 @@[m [mdef train_CrossEntropy(args, model, device, train_loader, optimizer, epoch, synt[m
+             code_synthemic_images, code_synthemic_labels, synt_sample_index= syn.generate_synthetic_samples( data, target, synthetic_portion=1,device=device)[m
+             data=torch.cat([data,code_synthemic_images],dim=0)[m
+             target=torch.cat([target,code_synthemic_labels],dim=0)[m
+[32m+[m[41m            [m
+         optimizer.zero_grad()[m
+ [m
+         output = model(data)[m
+[36m@@ -322,13 +401,29 @@[m [mdef train_CrossEntropy(args, model, device, train_loader, optimizer, epoch, synt[m
+ ##############################################################################[m
+ [m
+ ############################# Mixup original #################################[m
+[32m+[m[32mdef truncated_gaussian(mu=0, sigma=1, a=0, b=1):[m
+[32m+[m[32m    from scipy.stats import truncnorm[m
+[32m+[m[32m    # Convert to standard normal distribution[m
+[32m+[m[32m    a_standard = (a - mu) / sigma[m
+[32m+[m[32m    b_standard = (b - mu) / sigma[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Use scipy's truncnorm to generate truncated Gaussian samples[m
+[32m+[m[32m    samples = truncnorm.rvs(a_standard, b_standard, loc=mu, scale=sigma)[m
+[32m+[m[32m    return samples[m
+[32m+[m
+[32m+[m
+ def mixup_data(x, y, alpha=1.0, device='cuda'):[m
+     '''Returns mixed inputs, pairs of targets, and lambda'''[m
+     if alpha > 0:[m
+         lam = np.random.beta(alpha, alpha)[m
+[32m+[m[32m        # Use other random functions[m
+[32m+[m[32m        # lam=np.random.uniform(0,1)[m
+[32m+[m[32m        # lam=np.random.normal(0,1)[m
+[32m+[m[32m        # lam=truncated_gaussian(0,1,0,1)[m
+     else:[m
+         lam = 1[m
+ [m
+[32m+[m
+     batch_size = x.size()[0][m
+     if device=='cuda':[m
+         index = torch.randperm(batch_size).cuda()[m
+[36m@@ -344,18 +439,23 @@[m [mdef mixup_criterion(pred, y_a, y_b, lam):[m
+ [m
+     return lam * F.nll_loss(pred, y_a) + (1 - lam) * F.nll_loss(pred, y_b)[m
+ [m
+[31m-def train_mixUp(args, model, device, train_loader, optimizer, epoch, alpha):[m
+[32m+[m[32mdef train_mixUp(args, model, device, train_loader, optimizer, epoch, alpha, synthemic_samples=0):[m
+     model.train()[m
+     loss_per_batch = [][m
+ [m
+     acc_train_per_batch = [][m
+     correct = 0[m
+     for batch_idx, (data, target) in enumerate(train_loader):[m
+[32m+[m[41m        [m
+         data, target = data.to(device), target.to(device)[m
+[32m+[m[32m        if synthemic_samples==1:[m
+[32m+[m[32m            code_synthemic_images, code_synthemic_labels, synt_sample_index= syn.generate_synthetic_samples( data, target, synthetic_portion=1,device=device)[m
+[32m+[m[32m            data=torch.cat([data,code_synthemic_images],dim=0)[m
+[32m+[m[32m            target=torch.cat([target,code_synthemic_labels],dim=0)[m
+         optimizer.zero_grad()[m
+[31m-        #lam 表示target a 和target b 之间的权重 [m
+[31m-        #inputs 表示增强之后的图片， [m
+[31m-        #target a 表示 叠加前的x_a的ground-truth label  表示叠加之前的 x_b的ground-truth label [m
+[32m+[m[32m        # lam represents the weight between target a and target b[m
+[32m+[m[32m        # inputs represents the augmented image[m
+[32m+[m[32m        # target a represents the ground-truth label of x_a before mixing, target b represents the ground-truth label of x_b before mixing[m
+         inputs, targets_a, targets_b, lam = mixup_data(data, target, alpha, device)[m
+ [m
+         output = model(inputs)[m
+[36m@@ -411,7 +511,7 @@[m [mdef mixup_data_Boot(x, y, alpha=1.0, device='cuda'):[m
+     return mixed_x, y_a, y_b, lam, index[m
+ [m
+ def train_mixUp_HardBootBeta(args, model, device, train_loader, optimizer, epoch, alpha, bmm_model, \[m
+[31m-                            bmm_model_maxLoss, bmm_model_minLoss, reg_term, num_classes, distribution):[m
+[32m+[m[32m                            bmm_model_maxLoss, bmm_model_minLoss, reg_term, num_classes, distribution, synthemic_samples=0):[m
+     model.train()[m
+     loss_per_batch = [][m
+ [m
+[36m@@ -419,6 +519,10 @@[m [mdef train_mixUp_HardBootBeta(args, model, device, train_loader, optimizer, epoch[m
+     correct = 0[m
+ [m
+     for batch_idx, (data, target) in enumerate(train_loader):[m
+[32m+[m[32m        if synthemic_samples==1:[m
+[32m+[m[32m            code_synthemic_images, code_synthemic_labels, synt_sample_index= syn.generate_synthetic_samples( data, target, synthetic_portion=1,device=device)[m
+[32m+[m[32m            data=torch.cat([data,code_synthemic_images],dim=0)[m
+[32m+[m[32m            target=torch.cat([target,code_synthemic_labels],dim=0)[m
+         data, target = data.to(device), target.to(device)[m
+         optimizer.zero_grad()[m
+ [m
+[36m@@ -431,10 +535,10 @@[m [mdef train_mixUp_HardBootBeta(args, model, device, train_loader, optimizer, epoch[m
+         output_mean = F.softmax(output, dim=1)[m
+         tab_mean_class = torch.mean(output_mean,-2)[m
+         output = F.log_softmax(output, dim=1)[m
+[31m-        # 标准 mixup 之上 [m
+[31m-        # lam 表示mixup 两个随机样本的权重[m
+[32m+[m[32m        # On top of standard mixup[m
+[32m+[m[32m        # lam represents the weight of two random samples in mixup[m
+ [m
+[31m-        # 根据之前的BMM model 得到 每条数据的权重[m
+[32m+[m[32m        # Get the weight of each data point based on the previous BMM model[m
+         B, B_0 = compute_probabilities_batch(data, target, model, bmm_model, bmm_model_maxLoss, bmm_model_minLoss, distribution)[m
+         B = B.to(device)[m
+         B[B <= 1e-4] = 1e-4[m
+[36m@@ -443,10 +547,15 @@[m [mdef train_mixUp_HardBootBeta(args, model, device, train_loader, optimizer, epoch[m
+         B_0 = B_0.to(device)[m
+         B_0[B_0<= 1e-4] = 1e-4[m
+         B_0[B_0 >= 1-1e-4] = 1-1e-4[m
+[32m+[m[41m        [m
+[32m+[m[32m        # Select the first distribution as the main distribution[m
+[32m+[m[32m        B=1-B_0[m
+[32m+[m[41m        [m
+[32m+[m[41m        [m
+ [m
+         output_x1 = F.log_softmax(output_x1, dim=1)[m
+         output_x2 = output_x1[index, :][m
+[31m-        B2 = B[index] # mixup的第二个随机选择序列的权重[m
+[32m+[m[32m        B2 = B[index] # Weight of the second randomly selected sequence in mixup[m
+ [m
+         z1 = torch.max(output_x1, dim=1)[1][m
+         z2 = torch.max(output_x2, dim=1)[1][m
+[36m@@ -469,7 +578,7 @@[m [mdef train_mixUp_HardBootBeta(args, model, device, train_loader, optimizer, epoch[m
+         loss = lam*(loss_x1 + loss_x1_pred) + (1-lam)*(loss_x2 + loss_x2_pred)[m
+ [m
+         loss_reg = reg_loss_class(tab_mean_class, num_classes)[m
+[31m-        loss = loss + reg_term*loss_reg # 正则化[m
+[32m+[m[32m        loss = loss + reg_term*loss_reg # Regularization[m
+ [m
+         loss.backward()[m
+ [m
+[36m@@ -497,12 +606,16 @@[m [mdef train_mixUp_HardBootBeta(args, model, device, train_loader, optimizer, epoch[m
+ ##############################################################################[m
+ [m
+ [m
+[32m+[m
+[32m+[m
+[32m+[m
+[32m+[m
+ ##################### Mixup Beta Soft Bootstrapping ####################[m
+ # Mixup guided by our beta model with beta soft bootstrapping[m
+ [m
+ def mixup_criterion_mixSoft(pred, y_a, y_b, B, lam, index, output_x1, output_x2):[m
+     """[m
+[31m-        B 对应的每条数据都是一个float[m
+[32m+[m[32m        B corresponds to a float value for each data point[m
+     """[m
+     return torch.sum([m
+         (lam) * ((1 - B) * F.nll_loss(pred, y_a, reduction='none') + [m
+[36m@@ -512,7 +625,7 @@[m [mdef mixup_criterion_mixSoft(pred, y_a, y_b, B, lam, index, output_x1, output_x2)[m
+ [m
+ [m
+ def train_mixUp_SoftBootBeta(args, model, device, train_loader, optimizer, epoch, alpha, bmm_model, bmm_model_maxLoss, \[m
+[31m-                                            bmm_model_minLoss, reg_term, num_classes, distribution):[m
+[32m+[m[32m                                            bmm_model_minLoss, reg_term, num_classes, distribution, synthemic_samples=0):[m
+     model.train()[m
+     loss_per_batch = [][m
+ [m
+[36m@@ -520,7 +633,10 @@[m [mdef train_mixUp_SoftBootBeta(args, model, device, train_loader, optimizer, epoch[m
+     correct = 0[m
+ [m
+     for batch_idx, (data, target) in enumerate(train_loader):[m
+[31m-[m
+[32m+[m[32m        if synthemic_samples==1:[m
+[32m+[m[32m            code_synthemic_images, code_synthemic_labels, synt_sample_index= syn.generate_synthetic_samples( data, target, synthetic_portion=1,device=device)[m
+[32m+[m[32m            data=torch.cat([data,code_synthemic_images],dim=0)[m
+[32m+[m[32m            target=torch.cat([target,code_synthemic_labels],dim=0)[m
+         data, target = data.to(device), target.to(device)[m
+         optimizer.zero_grad()[m
+ [m
+[36m@@ -539,6 +655,9 @@[m [mdef train_mixUp_SoftBootBeta(args, model, device, train_loader, optimizer, epoch[m
+             B_0 = B_0.to(device)[m
+             B_0[B_0<= 1e-4] = 1e-4[m
+             B_0[B_0 >= 1-1e-4] = 1-1e-4[m
+[32m+[m[41m            [m
+[32m+[m[32m            # Select the first distribution as the main distribution[m
+[32m+[m[32m            # B=1-B_0[m[41m    [m
+ [m
+         inputs_mixed, targets_1, targets_2, lam, index = mixup_data_Boot(data, target, alpha, device)[m
+         output = model(inputs_mixed)[m
+[36m@@ -548,7 +667,7 @@[m [mdef train_mixUp_SoftBootBeta(args, model, device, train_loader, optimizer, epoch[m
+         output_x2 = output_x1[index, :][m
+ [m
+         tab_mean_class = torch.mean(output_mean, -2)#Columns mean[m
+[31m-        #output_x1 ,output_x2 表示单个样本的输出loss，output 表示合成样本的输出loss[m
+[32m+[m[32m        # output_x1, output_x2 represent the output loss of single samples, output represents the output loss of mixed samples[m
+         loss = mixup_criterion_mixSoft(output, targets_1, targets_2, B, lam, index, output_x1, output_x2)[m
+         loss_reg = reg_loss_class(tab_mean_class)[m
+         loss = loss + reg_term*loss_reg[m
+[36m@@ -592,17 +711,23 @@[m [mdef mixup_data_beta(x, y, B, device='cuda'):[m
+     else:[m
+         index = torch.randperm(batch_size)[m
+ [m
+[31m-    lam = ((1 - B) + (1 - B[index])) #为了添加后的权重B 能够归一化 a/(a+b) b/(a+b)[m
+[32m+[m[32m    lam = ((1 - B) + (1 - B[index])) # For normalizing the added weight B: a/(a+b) b/(a+b)[m
+     mixed_x = ((1-B)/lam).unsqueeze(1).unsqueeze(2).unsqueeze(3) * x + ((1-B[index])/lam).unsqueeze(1).unsqueeze(2).unsqueeze(3) * x[index, :][m
+     y_a, y_b = y, y[index][m
+     return mixed_x, y_a, y_b, index[m
+ [m
+[31m-def mixup_criterion_beta(pred, y_a, y_b):[m
+[32m+[m[32m# def mixup_criterion_beta(pred, y_a, y_b):[m
+[32m+[m[32m#     lam = np.random.beta(32, 32)[m
+[32m+[m[32m#     return lam * F.nll_loss(pred, y_a) + (1-lam) * F.nll_loss(pred, y_b)[m
+[32m+[m
+[32m+[m[32mdef mixup_criterion_beta(pred, y_a, y_b, reduction='mean'):[m
+     lam = np.random.beta(32, 32)[m
+[31m-    return lam * F.nll_loss(pred, y_a) + (1-lam) * F.nll_loss(pred, y_b)[m
+[32m+[m[32m    if reduction == 'none':[m
+[32m+[m[32m        return lam * F.cross_entropy(pred, y_a, reduction='none') + (1-lam) * F.cross_entropy(pred, y_b, reduction='none')[m
+[32m+[m[32m    return lam * F.cross_entropy(pred, y_a) + (1-lam) * F.cross_entropy(pred, y_b)[m
+ [m
+ def train_mixUp_Beta(args, model, device, train_loader, optimizer, epoch, alpha, bmm_model,[m
+[31m-                                bmm_model_maxLoss, bmm_model_minLoss, distribution):[m
+[32m+[m[32m                                bmm_model_maxLoss, bmm_model_minLoss, distribution, synthemic_samples=0):[m
+     model.train()[m
+     loss_per_batch = [][m
+ [m
+[36m@@ -610,14 +735,17 @@[m [mdef train_mixUp_Beta(args, model, device, train_loader, optimizer, epoch, alpha,[m
+     correct = 0[m
+ [m
+     for batch_idx, (data, target) in enumerate(train_loader):[m
+[31m-[m
+         data, target = data.to(device), target.to(device)[m
+[32m+[m[32m        if synthemic_samples==1:[m
+[32m+[m[32m            code_synthemic_images, code_synthemic_labels, synt_sample_index= syn.generate_synthetic_samples( data, target, synthetic_portion=1,device=device)[m
+[32m+[m[32m            data=torch.cat([data,code_synthemic_images],dim=0)[m
+[32m+[m[32m            target=torch.cat([target,code_synthemic_labels],dim=0)[m
+         optimizer.zero_grad()[m
+ [m
+         if epoch == 1:[m
+             B = 0.5 * torch.ones(len(target)).float().to(device)[m
+         else:[m
+[31m-            #根据batch loss得到一个[m
+[32m+[m[32m            # Get one based on batch loss[m
+             B, B_0= compute_probabilities_batch(data, target, model, bmm_model, bmm_model_maxLoss, bmm_model_minLoss, distribution)[m
+             B = B.to(device)[m
+             B[B <= 1e-4] = 1e-4[m
+[36m@@ -627,18 +755,23 @@[m [mdef train_mixUp_Beta(args, model, device, train_loader, optimizer, epoch, alpha,[m
+             B_0[B_0<= 1e-4] = 1e-4[m
+             B_0[B_0 >= 1-1e-4] = 1-1e-4[m
+             [m
+[31m-            # B=1-B_0 # #修改权重为B0 [m
+[32m+[m[32m            # Select the first distribution as the main distribution[m
+[32m+[m[32m            # B=1-B_0[m
+ [m
+[31m-        #合成的图片的权重是学习出来的，之前的mixup固定或者随机的[m
+[32m+[m[32m        # The weights of mixed images are learned, while previous mixup used fixed or random weights[m
+     [m
+         inputs_mixed, targets_1, targets_2, index = mixup_data_beta(data, target, B, device)[m
+     [m
+         output = model(inputs_mixed)[m
+[31m-     [m
+[31m-        output = F.log_softmax(output, dim=1)[m
+[32m+[m[41m        [m
+[32m+[m[32m        # No need for log_softmax, as cross_entropy handles it internally[m
+[32m+[m[32m        # output = F.log_softmax(output, dim=1)[m
+ [m
+[32m+[m[32m        # For DP training, we need to calculate the loss for each sample separately[m
+[32m+[m[41m    [m
+         loss = mixup_criterion_beta(output, targets_1, targets_2)[m
+ [m
+[32m+[m
+         loss.backward()[m
+ [m
+         optimizer.step()[m
+[36m@@ -668,14 +801,14 @@[m [mdef train_mixUp_Beta(args, model, device, train_loader, optimizer, epoch, alpha,[m
+ ################## Dynamic Mixup + soft2hard bootstraping ##################[m
+ def mixup_criterion_SoftHard(pred, y_a, y_b, B, index, output_x1, output_x2, Temp):[m
+     """[m
+[31m-        pred: 表示mixup image的输出[m
+[31m-        y_a: mixup之前的 a 的ground-truth[m
+[31m-        y_b: mixup之前的 b 的ground-truth[m
+[31m-        index: mixup的 index[m
+[31m-        output_x1: mixup之前的 a输出 用于修改loss[m
+[31m-        output_x2: mixup之前的 b输出 用户修改loss [m
+[32m+[m[32m        pred: represents the output of mixup image[m
+[32m+[m[32m        y_a: ground-truth of a before mixup[m
+[32m+[m[32m        y_b: ground-truth of b before mixup[m
+[32m+[m[32m        index: index used in mixup[m
+[32m+[m[32m        output_x1: output of a before mixup, used to modify loss[m
+[32m+[m[32m        output_x2: output of b before mixup, used to modify loss[m
+         pred: log (h)[m
+[31m-        (-torch.sum(F.softmax(output_x1/Temp, dim=1) :z_p表示mixup a的输出之后[m
+[32m+[m[32m        (-torch.sum(F.softmax(output_x1/Temp, dim=1): represents the output of mixup a afterwards[m
+     """[m
+     return torch.sum([m
+         (0.5) * ([m
+[36m@@ -683,9 +816,39 @@[m [mdef mixup_criterion_SoftHard(pred, y_a, y_b, B, index, output_x1, output_x2, Tem[m
+                 (0.5) * ([m
+                 (1 - B[index]) * F.nll_loss(pred, y_b, reduction='none') + B[index] * (-torch.sum(F.softmax(output_x2/Temp, dim=1) * pred, dim=1)))) / len([m
+         pred)[m
+[32m+[m[32mdef mixup_criterion_SoftHard_with_dp(pred, y_a, y_b, B, index, output_x1, output_x2, Temp):[m
+[32m+[m[32m    """[m
+[32m+[m[32m        pred: represents the output of mixup image[m
+[32m+[m[32m        y_a: ground-truth of a before mixup[m
+[32m+[m[32m        y_b: ground-truth of b before mixup[m
+[32m+[m[32m        index: index used in mixup[m
+[32m+[m[32m        output_x1: output of a before mixup, used to modify loss[m
+[32m+[m[32m        output_x2: output of b before mixup, used to modify loss[m
+[32m+[m[32m        pred: model output logits[m
+[32m+[m[32m        Returns: loss for each sample[m
+[32m+[m[32m    """[m
+[32m+[m[32m    # Calculate hard label loss for each sample[m
+[32m+[m[32m    hard_loss_a = F.nll_loss(F.log_softmax(pred, dim=1), y_a, reduction='none')[m
+[32m+[m[32m    hard_loss_b = F.nll_loss(F.log_softmax(pred, dim=1), y_b, reduction='none')[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Calculate soft label loss for each sample[m
+[32m+[m[32m    soft_probs_a = F.softmax(output_x1/Temp, dim=1)[m
+[32m+[m[32m    soft_probs_b = F.softmax(output_x2/Temp, dim=1)[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Calculate soft label loss for each sample[m
+[32m+[m[32m    log_pred = F.log_softmax(pred, dim=1)[m
+[32m+[m[32m    soft_loss_a = -(soft_probs_a * log_pred).sum(dim=1)[m
+[32m+[m[32m    soft_loss_b = -(soft_probs_b * log_pred).sum(dim=1)[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Apply weights to each sample[m
+[32m+[m[32m    per_sample_loss = (0.5) * ((1 - B) * hard_loss_a + B * soft_loss_a) + \[m
+[32m+[m[32m                     (0.5) * ((1 - B[index]) * hard_loss_b + B[index] * soft_loss_b)[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Return loss for each sample[m
+[32m+[m[32m    return per_sample_loss[m
+ [m
+ def train_mixUp_SoftHardBetaDouble(args, model, device, train_loader, optimizer, epoch, bmm_model, \[m
+[31m-                                    bmm_model_maxLoss, bmm_model_minLoss, countTemp, k, temp_length, reg_term, num_classes, distribution):[m
+[32m+[m[32m                                    bmm_model_maxLoss, bmm_model_minLoss, countTemp, k, temp_length, reg_term, num_classes, distribution, synthemic_samples=0):[m
+     model.train()[m
+     loss_per_batch = [][m
+ [m
+[36m@@ -695,20 +858,19 @@[m [mdef train_mixUp_SoftHardBetaDouble(args, model, device, train_loader, optimizer,[m
+     temp_vec = np.linspace(1, 0.001, temp_length)[m
+ [m
+     for batch_idx, (data, target) in enumerate(train_loader):[m
+[31m-[m
+         data, target = data.to(device), target.to(device)[m
+[31m-        optimizer.zero_grad()[m
+ [m
+[32m+[m[32m        optimizer.zero_grad()[m
+         output_x1 = model(data)[m
+         output_x1.detach_()[m
+[31m-        optimizer.zero_grad()[m
+[32m+[m[32m        if "dp" not in args.experiment_name:[m
+[32m+[m[32m            optimizer.zero_grad()[m
+ [m
+         if epoch == 1:[m
+             B = 0.5*torch.ones(len(target)).float().to(device)[m
+         else:[m
+[31m-            #计算这个batch 的高loss和低loss[m
+[31m-            # poison samples和clean samles[m
+[31m-    [m
+[32m+[m[32m            # Calculate high loss and low loss for this batch[m
+[32m+[m[32m            # Poison samples and clean samples[m
+             B, B_0 = compute_probabilities_batch(data, target, model,  bmm_model,  bmm_model_maxLoss,  bmm_model_minLoss, distribution)[m
+             B = B.to(device)[m
+             B[B <= 1e-4] = 1e-4[m
+[36m@@ -718,30 +880,40 @@[m [mdef train_mixUp_SoftHardBetaDouble(args, model, device, train_loader, optimizer,[m
+             B_0[B_0<= 1e-4] = 1e-4[m
+             B_0[B_0 >= 1-1e-4] = 1-1e-4[m
+ [m
+[31m-            # #修改权重为B0 [m
+[32m+[m[32m            # Select the first distribution as the main distribution[m
+             # B=1-B_0[m
+ [m
+[31m-        # 返回一个值 B： 是一个list B 表示 样本属于dirty label分布的概率 [m
+[31m-        #更换poisoning samples 的分布到 clean samples 的分布[m
+[32m+[m[32m        # Return a value B: a list where B represents the probability that a sample belongs to the dirty label distribution[m
+[32m+[m[32m        # Change the distribution of poisoning samples to the distribution of clean samples[m
+  [m
+         inputs_mixed, targets_1, targets_2, index = mixup_data_beta(data, target, B, device)[m
+         output = model(inputs_mixed)[m
+[32m+[m
+         output_mean = F.softmax(output, dim=1)[m
+[31m-        output = F.log_softmax(output, dim=1) # mixup data 的输出[m
+[32m+[m[32m        output = F.log_softmax(output, dim=1) # output of mixup data[m
+ [m
+[31m-        output_x2 = output_x1[index, :]  #原始数据的版本1的输出[m
+[31m-        tab_mean_class = torch.mean(output_mean,-2) #原始数据版本2的输出[m
+[32m+[m[32m        output_x2 = output_x1[index, :]  # output of original data version 1[m
+[32m+[m[32m        tab_mean_class = torch.mean(output_mean,-2) # output of original data version 2[m
+ [m
+         Temp = temp_vec[k][m
+[31m-        # 同时更改loss函数[m
+[31m-        loss = mixup_criterion_SoftHard(output, targets_1, targets_2, B, index, output_x1, output_x2, Temp)[m
+[31m-        loss_reg = reg_loss_class(tab_mean_class, num_classes)[m
+[31m-        loss = loss + reg_term*loss_reg[m
+ [m
+[32m+[m[32m        # For DP training, we need to calculate the loss for each sample separately[m
+ [m
+[32m+[m[32m        if "dp" in args.experiment_name:[m
+[32m+[m[32m            # For DP training, we need to calculate the loss for each sample separately[m
+[32m+[m[32m            per_sample_loss = mixup_criterion_SoftHard_with_dp(output, targets_1, targets_2, B, index, output_x1, output_x2, Temp)[m
+[32m+[m[32m            # Calculate regularization loss[m
+[32m+[m[32m            loss_reg = reg_loss_class(tab_mean_class, num_classes)[m
+[32m+[m[32m            # Add the same regularization loss to each sample and calculate the average[m
+[32m+[m[32m            loss = per_sample_loss.mean() + reg_term * loss_reg[m
+[32m+[m[32m        else:[m
+[32m+[m[32m            loss = mixup_criterion_SoftHard(output, targets_1, targets_2, B, index, output_x1, output_x2, Temp)[m
+[32m+[m[32m            loss_reg = reg_loss_class(tab_mean_class, num_classes)[m
+[32m+[m[32m            loss = loss + reg_term * loss_reg[m
+[32m+[m[41m        [m
+         loss.backward()[m
+[31m-[m
+         optimizer.step()[m
+[32m+[m
+         ################## monitor losses  ####################################[m
+         loss_per_batch.append(loss.item())[m
+         ########################################################################[m
+[36m@@ -773,35 +945,38 @@[m [mdef train_mixUp_SoftHardBetaDouble(args, model, device, train_loader, optimizer,[m
+ [m
+ [m
+ def compute_probabilities_batch(data, target, cnn_model, bmm_model, bmm_model_max, bmm_model_min, distribution):[m
+[32m+[m[41m    [m
+     cnn_model.eval()[m
+     if distribution=="gaussian":[m
+         outputs = cnn_model(data)[m
+         outputs = F.log_softmax(outputs, dim=1)[m
+         batch_losses = F.nll_loss(outputs.float(), target, reduction = 'none')[m
+         batch_losses.detach_()[m
+[31m-        mid_inter=cnn_model(data, lin=0, lout=5)[m
+[32m+[m[32m        mid_inter=cnn_model(data, lin=0, lout=6)[m
+         mid_inter.detach_()[m
+         # normalized_mid_inter=torch.nan_to_num(mid_inter, nan=0.0)[m
+         normalized_mid_inter = (mid_inter- bmm_model_min) / (bmm_model_max -  bmm_model_min + 1e-6)[m
+         normalized_mid_inter=normalized_mid_inter.reshape(len(normalized_mid_inter), -1).to("cpu")[m
+         B_1, B_0 = bmm_model.look_lookup(normalized_mid_inter, bmm_model_max, bmm_model_min)[m
+[32m+[m[41m        [m
+     else:[m
+         outputs = cnn_model(data)[m
+         outputs = F.log_softmax(outputs, dim=1)[m
+         batch_losses = F.nll_loss(outputs.float(), target, reduction = 'none')[m
+         batch_losses.detach_()[m
+         outputs.detach_()[m
+[31m-        #将batch losses 进行归一化，归一化的loss 大于1 表示超过 maxloss[m
+[32m+[m[32m        # Normalize batch losses, normalized loss greater than 1 indicates exceeding maxloss[m
+         batch_losses = (batch_losses - bmm_model_min) / (bmm_model_max - bmm_model_min + 1e-6)[m
+         batch_losses[batch_losses >= 1] = 1-10e-4[m
+         batch_losses[batch_losses <= 0] = 10e-4[m
+ [m
+         #B = bmm_model.posterior(batch_losses,1)[m
+[31m-        #poison samples和clean samles[m
+[32m+[m[32m        # Poison samples and clean samples[m
+         B_1, B_0 = bmm_model.look_lookup(batch_losses, bmm_model_max, bmm_model_min)[m
+[32m+[m[41m        [m
+     cnn_model.train()[m
+     # for i in range(len(B_0)):[m
+[31m-    #     print("属于分布clean samples 的loss 分布是：",B_0[i],"属于分布poison samples 的loss 分布是：",B_1[i],)[m
+[32m+[m[32m    #     print("Loss distribution belonging to clean samples:", B_0[i], "Loss distribution belonging to poison samples:", B_1[i])[m
+     return torch.FloatTensor(B_1), torch.FloatTensor(B_0),[m
+ [m
+ [m
+[36m@@ -913,28 +1088,28 @@[m [mclass BetaMixture1D(object):[m
+ [m
+     def likelihood(self, x, y):[m
+         # return the pdf of the point in x set[m
+[31m-        # y表示分布的label ，0 表示clean 分布 1 表示 dirty 分布[m
+[32m+[m[32m        # y represents the distribution label, 0 represents clean distribution, 1 represents dirty distribution[m
+         return stats.beta.pdf(x, self.alphas[y], self.betas[y])[m
+ [m
+     def weighted_likelihood(self, x, y):[m
+         return self.weight[y] * self.likelihood(x, y)[m
+ [m
+     def probability(self, x):[m
+[31m-        #得到 一个sum值,混合概率分布，这个分布是两个值相加[m
+[32m+[m[32m        # Get a sum value, mixed probability distribution, this distribution is the sum of two values[m
+         return sum(self.weighted_likelihood(x, y) for y in range(2))[m
+ [m
+     def posterior(self, x, y):[m
+[31m-        #同时考虑权重在两个分布下的概率值[m
+[32m+[m[32m        # Consider probability values under both distributions with weights[m
+         return self.weighted_likelihood(x, y) / (self.probability(x) + self.eps_nan)[m
+ [m
+ [m
+ [m
+     def responsibilities(self, x):[m
+[31m-        #得到两个加权分布[m
+[32m+[m[32m        # Get two weighted distributions[m
+         r =  np.array([self.weighted_likelihood(x, i) for i in range(2)])[m
+         # there are ~200 samples below that value[m
+         r[r <= self.eps_nan] = self.eps_nan[m
+[31m-        r /= r.sum(axis=0) #处理后在0-1之间[m
+[32m+[m[32m        r /= r.sum(axis=0) # After processing, values are between 0-1[m
+         return r[m
+ [m
+     def score_samples(self, x):[m
+[36m@@ -942,17 +1117,17 @@[m [mclass BetaMixture1D(object):[m
+ [m
+     def fit(self, x):[m
+         x = np.copy(x)[m
+[31m-        # EM on beta distributions unsable with x == 0 or 1  处理数据到 （0，1）之间[m
+[32m+[m[32m        # EM on beta distributions unstable with x == 0 or 1, process data to be between (0,1)[m
+         eps = 1e-4[m
+         x[x >= 1 - eps] = 1 - eps[m
+         x[x <= eps] = eps[m
+ [m
+         for i in range(self.max_iters):[m
+ [m
+[31m-            # E-step r 表示两个数组，分别是两个beta 分布对于x 的拟合[m
+[32m+[m[32m            # E-step r represents two arrays, which are the fits of two beta distributions to x[m
+             r = self.responsibilities(x)[m
+ [m
+[31m-            # M-step 固定 r值，更新beta的参数值[m
+[32m+[m[32m            # M-step fix r value, update beta parameters[m
+             self.alphas[0], self.betas[0] = fit_beta_weighted(x, r[0])[m
+             self.alphas[1], self.betas[1] = fit_beta_weighted(x, r[1])[m
+             self.weight = r.sum(axis=1)[m
+[36m@@ -961,25 +1136,25 @@[m [mclass BetaMixture1D(object):[m
+         return self[m
+ [m
+     def predict(self, x):[m
+[31m-        return self.posterior(x, 1) > 0.5  # 1表示第二个分布[m
+[32m+[m[32m        return self.posterior(x, 1) > 0.5  # 1 represents the second distribution[m
+ [m
+     def post_predict(self, x):[m
+         return self.posterior(x, 1) [m
+ [m
+     def create_lookup(self, y):[m
+[31m-        #得到 y 的分布，在0-1的分布概率[m
+[31m-        # y 表示 1 [m
+[31m-        x_l = np.linspace(0+self.eps_nan, 1-self.eps_nan, self.lookup_resolution) #切成100小份[m
+[32m+[m[32m        # Get the distribution of y, probability distribution between 0-1[m
+[32m+[m[32m        # y equals 1[m
+[32m+[m[32m        x_l = np.linspace(0+self.eps_nan, 1-self.eps_nan, self.lookup_resolution) # Split into 100 small parts[m
+  [m
+[31m-        lookup_0=self.posterior(x_l, 0) #得到beta2 分布在0-1 之间的概率值[m
+[31m-        lookup_t = self.posterior(x_l, y) #得到beta2 分布在0-1 之间的概率值[m
+[32m+[m[32m        lookup_0=self.posterior(x_l, 0) # Get probability values of beta2 distribution between 0-1[m
+[32m+[m[32m        lookup_t = self.posterior(x_l, y) # Get probability values of beta2 distribution between 0-1[m
+ [m
+ [m
+ [m
+[31m-        lookup_t[np.argmax(lookup_t):] = lookup_t.max()  #超过最大值之后全都修改为最大值[m
+[32m+[m[32m        lookup_t[np.argmax(lookup_t):] = lookup_t.max()  # After exceeding the maximum value, all values are set to the maximum value[m
+  [m
+[31m-        self.lookup = lookup_t # 得到关于poison samples 的loss分布[m
+[31m-        self.lookup_0=lookup_0 # 得到关于clean samples 的loss分布[m
+[32m+[m[32m        self.lookup = lookup_t # Get loss distribution for poison samples[m
+[32m+[m[32m        self.lookup_0=lookup_0 # Get loss distribution for clean samples[m
+ [m
+         self.lookup_loss = x_l # I do not use this one at the end[m
+         print("alpha: ", self.alphas)[m
+[36m@@ -994,6 +1169,7 @@[m [mclass BetaMixture1D(object):[m
+         x_i = np.array((self.lookup_resolution * x_i).astype(int))[m
+         x_i[x_i < 0] = 0[m
+         x_i[x_i == self.lookup_resolution] = self.lookup_resolution - 1[m
+[32m+[m[41m        [m
+         return self.lookup[x_i], self.lookup_0[x_i][m
+ [m
+ [m
+[36m@@ -1036,14 +1212,14 @@[m [mclass BetaMixture1D(object):[m
+     # def plot(self, loss_truth, idx_to_change, epoch, save_dir):[m
+     #     color1='#fdac53'[m
+     #     color2='#00bbe6'[m
+[31m-    #     # 拟合结果[m
+[32m+[m[32m    #     # Fitting results[m
+     #     # idx_to_change=np.array(idx_to_change).astype(bool)[m
+     #     # x = np.linspace(0, 1, 100)[m
+     #     # fig, ax = plt.subplots(figsize=(5, 4))[m
+     #     # plt.plot(x, self.weighted_likelihood(x, 0), label='negative')[m
+     #     # plt.plot(x, self.weighted_likelihood(x, 1), label='positive')[m
+     #     # plt.plot(x, self.probability(x), lw=2, label='mixture')[m
+[31m-    #     # #真实结果[m
+[32m+[m[32m    #     # # Actual results[m
+     #     # print(len(loss_truth))[m
+     #     # print(len(idx_to_change))[m
+     #     # clean_loss=np.array(loss_truth)[~idx_to_change][m
+[36m@@ -1071,7 +1247,7 @@[m [mclass BetaMixture1D(object):[m
+     #     fig, ax1 = plt.subplots(figsize=(5, 4))[m
+ [m
+ [m
+[31m-    #     #真实结果[m
+[32m+[m[32m    #     # Actual results[m
+     #     clean_loss=np.array(loss_truth)[~idx_to_change][m
+     #     dirty_loss=np.array(loss_truth)[idx_to_change][m
+     #     print("num clean: ",len(clean_loss), "num dirty: ", len(dirty_loss))[m
+[36m@@ -1083,7 +1259,7 @@[m [mclass BetaMixture1D(object):[m
+     #     nm_n, nm_bins, nm_patches = ax2.hist(dirty_loss, bins=nbins, density=True, color=color2, label=attr_name1, alpha=0.7, )[m
+         [m
+         [m
+[31m-    #     # 添加第二个图例[m
+[32m+[m[32m    #     # Add the second legend[m
+     #     ax2.legend(loc='upper right')[m
+ [m
+     #     ax1.plot(x, self.weighted_likelihood(x, 0), label='negative',c=color1)[m
+[36m@@ -1131,7 +1307,7 @@[m [mdef train_with_early_stopping():[m
+ [m
+ [m
+ class GMM_mixture2D(object):[m
+[31m-    def __init__(self, n_components, max_iter=10, tol=1e-3, cuda="cuda",GPU_version=True):[m
+[32m+[m[32m    def __init__(self, n_components, max_iter=10, tol=1e-3, cuda="cuda"):[m
+         self.n_components = n_components[m
+         self.max_iter = max_iter[m
+         self.tol = tol[m
+[36m@@ -1140,40 +1316,33 @@[m [mclass GMM_mixture2D(object):[m
+         self.weight=None[m
+         self.return_id=0[m
+         self.cuda=cuda[m
+[31m-        self.GPU_version=GPU_version[m
+         self.PCA=PCA(n_components=10, svd_solver='full')[m
+ [m
+     def fit(self, data, all_loss):[m
+[31m-        data =  data.reshape(len(data), -1)[m
+[32m+[m[32m        # data =  data.reshape(len(data), -1)[m
+         K, N = data.shape[m
+[31m-        print("train mixture model with feature:", N)[m
+[32m+[m[32m        print("train mixture model with feature:",K, N)[m
+         import time[m
+[31m-        #添加高斯分布 GPU 版本[m
+[32m+[m[32m        # Add Gaussian distribution GPU version[m
+         start_time=time.time()[m
+         # np.save("./feature", np.array(data))[m
+[31m-        if self.GPU_version:[m
+[31m-            print("train gaussiann model with GPU: ")[m
+[31m-            import gmm_torch.gmm as gmm[m
+[31m-            # data=self.PCA.fit_transform(data)[m
+[31m-            K, N = data.shape[m
+[31m-            self.gmm_model=gmm.GaussianMixture(n_components=self.n_components, n_features=N, covariance_type="diag",device=self.cuda)[m
+[31m-            data=torch.from_numpy(data).float().to(self.cuda)[m
+[31m-            self.gmm_model.fit(data)[m
+[31m-            end_time=time.time()[m
+[31m-        else:[m
+[31m-            self.gmm_model=GMM(n_components=self.n_components, covariance_type="diag", max_iter=self.max_iter)[m
+[31m-            self.gmm_model.fit(data)[m
+[31m-            end_time=time.time()[m
+[32m+[m[41m    [m
+[32m+[m[32m        self.gmm_model=GMM(n_components=self.n_components, covariance_type="diag", max_iter=self.max_iter)[m
+[32m+[m[32m        self.gmm_model.fit(data)[m
+[32m+[m[32m        end_time=time.time()[m
+[32m+[m[41m            [m
+         print("time_all: ",end_time-start_time)[m
+       [m
+         # sum_possibility=np.sum(self.posterior(np.array(data)[np.array(top_loss_id)[-num_sample_signs:]], 1))[m
+         # if sum_possibility< int(num_sample_signs*0.1):[m
+[31m-        #根据两个分类结果分成两类 loss ，查看loss的中间值[m
+[31m-        distribution_id_0=np.squeeze(self.predict(data,y=0))[m
+[31m-        distribution_id_1=np.squeeze(self.predict(data,y=1))[m
+[31m-        # print(distribution_id_0)[m
+[31m-        distribution_loss_0=np.array(all_loss)[distribution_id_0][m
+[31m-        distribution_loss_1=np.array(all_loss)[distribution_id_1][m
+[32m+[m[32m        # Divide into two types of loss based on two classification results, check the median value of loss[m
+[32m+[m
+[32m+[m
+[32m+[m[32m        distribution_id_0=np.squeeze(self.predict(data, y=0))[m
+[32m+[m[32m        distribution_id_1=np.squeeze(self.predict(data, y=1))[m
+[32m+[m[41m    [m
+[32m+[m[32m        distribution_loss_0=np.array(all_loss)[np.array(distribution_id_0)][m
+[32m+[m[32m        distribution_loss_1=np.array(all_loss)[np.array(distribution_id_1)][m
+        [m
+         mid_loss_0=np.median(distribution_loss_0)[m
+         mid_loss_1=np.median(distribution_loss_1)[m
+[36m@@ -1183,7 +1352,6 @@[m [mclass GMM_mixture2D(object):[m
+         else:[m
+             self.return_id=1[m
+         # print("sum poss ",sum_possibility," return_id ", self.return_id)[m
+[31m-[m
+         # print(gmm.means_)[m
+         # print(gmm.weights_)[m
+         # print(gmm.predict_proba(data))[m
+[36m@@ -1191,53 +1359,43 @@[m [mclass GMM_mixture2D(object):[m
+ [m
+ [m
+     def predict(self, x, y=1):[m
+[31m-        return self.posterior(x, y) > 0.5  # 1表示第二个分布[m
+[32m+[m[32m        return self.posterior(x, y) > 0.5  # 1 represents the second distribution[m
+ [m
+     def posterior(self, x, y=None):[m
+         if y==None:[m
+             return self.gmm_model.predict_proba(x)[m
+         else:[m
+[31m-            if self.GPU_version:[m
+[31m-                re=self.gmm_model.predict_proba(x).to("cpu").numpy()[:,y:y+1][m
+[31m-                return  np.nan_to_num(re, nan=0.0, posinf=0.0, neginf=0.0)[m
+[31m-            else:[m
+[31m-                re=self.gmm_model.predict_proba(x).to("cpu").numpy()[:,y:y+1][m
+[31m-                return np.nan_to_num(re, nan=0.0, posinf=0.0, neginf=0.0)[:,y:y+1][m
+[32m+[m[32m            re=np.array(self.gmm_model.predict_proba(x))[:,y:y+1][m
+[32m+[m[32m            return re[m
+[32m+[m[41m    [m
+                 [m
+     [m
+[31m-    def create_lookup(self, y):[m
+[31m-        #得到 y 的分布，在0-1的分布概率[m
+[31m-        # y 表示 1 [m
+[31m-        x_l = np.linspace(0+self.eps_nan, 1-self.eps_nan, self.lookup_resolution) #切成100小份[m
+[32m+[m[32m    # def create_lookup(self, y):[m
+[32m+[m[32m    #     # Get the distribution of y, probability distribution between 0-1[m
+[32m+[m[32m    #     # y equals 1[m
+[32m+[m[32m    #     x_l = np.linspace(0+self.eps_nan, 1-self.eps_nan, self.lookup_resolution) # Split into 100 small parts[m
+  [m
+[31m-        lookup_0=self.posterior(x_l, 0) #得到beta2 分布在0-1 之间的概率值[m
+[31m-        lookup_t = self.posterior(x_l, y) #得到beta2 分布在0-1 之间的概率值[m
+[32m+[m[32m    #     lookup_0=self.posterior(x_l, 0) # Get probability values of beta2 distribution between 0-1[m
+[32m+[m[32m    #     lookup_t = self.posterior(x_l, y) # Get probability values of beta2 distribution between 0-1[m
+ [m
+[31m-        lookup_t[np.argmax(lookup_t):] = lookup_t.max()  #超过最大值之后全都修改为最大值[m
+[32m+[m[32m    #     lookup_t[np.argmax(lookup_t):] = lookup_t.max()  # After exceeding the maximum value, all values are set to the maximum value[m
+  [m
+[31m-        self.lookup = lookup_t # 得到关于poison samples 的loss分布[m
+[31m-        self.lookup_0=lookup_0 # 得到关于clean samples 的loss分[m
+[31m-        self.lookup_loss = x_l # I do not use this one at the end[m
+[31m-        print("alpha: ", self.alphas)[m
+[31m-        print("betas: ", self.betas)[m
+[32m+[m[32m    #     self.lookup = lookup_t # Get loss distribution for poison samples[m
+[32m+[m[32m    #     self.lookup_0=lookup_0 # Get loss distribution for clean samples[m
+[32m+[m[32m    #     self.lookup_loss = x_l # I do not use this one at the end[m
+[32m+[m[32m    #     print("alpha: ", self.alphas)[m
+[32m+[m[32m    #     print("betas: ", self.betas)[m
+ [m
+     def look_lookup(self, x_i, min, max, ):[m
+         """[m
+[31m-            返回两个不同的高斯分布[m
+[31m-            随机选择100 high loss数据的特征[m
+[32m+[m[32m            Return two different Gaussian distributions[m
+[32m+[m[32m            Randomly select features from 100 high loss data points[m
+         """[m
+         x_i =  x_i.reshape(len(x_i), -1)[m
+[31m-        if self.GPU_version:[m
+[31m-            x_i=x_i.to(self.cuda)[m
+[32m+[m[41m     [m
+         [m
+[31m-            # print("Feature contains NaN:", np.isnan( x_i).any())[m
+[31m-            # print("Feature contains Inf:", np.isinf( x_i).any())[m
+[31m-            # x_i=self.PCA.fit_transform(x_i)[m
+[31m-            # print(np.shape(x_i.to("cpu").numpy()))[m
+[31m-            [m
+[31m-  [m
+[31m-        lookup_0=self.posterior(x_i, 0) #得到beta2 分布在0-1 之间的概率值[m
+[31m-        lookup_t = self.posterior(x_i, 1) #得到beta2 分布在0-1 之间的概率值[m
+[32m+[m[32m        lookup_0=self.posterior(x_i, 0) # Get probability values of beta2 distribution between 0-1[m
+[32m+[m[32m        lookup_t = self.posterior(x_i, 1) # Get probability values of beta2 distribution between 0-1[m
+         [m
+         if self.return_id==1:[m
+             return np.squeeze(lookup_t), np.squeeze(lookup_0)[m
+[36m@@ -1273,7 +1431,22 @@[m [mclass GMM_mixture2D(object):[m
+         plt.savefig('{}'.format(dir+"gaussian_epoch_{}.pdf".format(epoch)))[m
+         np.save(os.path.join(dir,f"clean_loss_{epoch}.pdf"),clean_loss)[m
+         np.save(os.path.join(dir,f"dirty_loss_{epoch}.pdf"),dirty_loss)[m
+[31m-        import plot_code[m
+[32m+[m[41m     [m
+         all_prediction=np.concatenate((clean_loss, dirty_loss))[m
+         all_answers = np.array(np.concatenate((np.zeros(len(clean_loss)), np.ones(len(dirty_loss)))), dtype=bool)[m
+[31m-        plot_code.plot_tprfpr(all_prediction,all_answers,save_dir=dir, epoch=epoch)[m
+\ No newline at end of file[m
+[32m+[m
+[32m+[m[41m        [m
+[32m+[m[41m        [m
+[32m+[m[32mdef save_data(save_dir,save_file,file_title):[m
+[32m+[m[32m    if not os.path.exists(save_dir):[m
+[32m+[m[32m        os.mkdir(save_dir)[m
+[32m+[m[32m    np.save(os.path.join(save_dir,file_title),save_file)[m
+[32m+[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef load_data(save_dir,file_title):[m
+[32m+[m[32m    if not os.path.exists(save_dir):[m
+[32m+[m[32m        print(" No such dir")[m
+[32m+[m[32m    else:[m
+[32m+[m[32m        load_file=np.load(os.path.join(save_dir,file_title))[m
+[32m+[m[32m        return load_file[m
+\ No newline at end of file[m

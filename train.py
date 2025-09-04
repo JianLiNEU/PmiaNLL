@@ -60,14 +60,13 @@ def main():
 
     
     if args.poison_strategy=="all":
-        noisy_labels, idxs_to_change = add_noise_cifar_wo(trainset, args.noise_level, args.dataset)  # Directly modify labels in train_loader
+        noisy_labels, idxs_to_change = add_noise_cifar_wo(trainset, args.noise_level, args.dataset)  # it changes the labels in the train loader directly, 直接改变的train_loader中的label
         noisy_labels_track, idxs_to_change_track = add_noise_cifar_wo(trainset_track, args.noise_level, args.dataset)
     else:
-        # Poison specific target class
-        noisy_labels, idxs_to_change = poisoned_target_class(trainset, args.target_class, args.noise_level, args.dataset,attack_type=args.attack_type)  # Directly modify labels in train_loader
-        noisy_labels_track, idxs_to_change_track = poisoned_target_class(trainset_track,  args.target_class, args.noise_level, args.dataset,attack_type=args.attack_type)
+      
+        noisy_labels, idxs_to_change = poisoned_target_class(trainset, args.target_class, args.noise_level, args.dataset, args.label_type, args.device)  # it changes the labels in the train loader directly, 直接改变的train_loader中的label
+        noisy_labels_track, idxs_to_change_track = poisoned_target_class(trainset_track,  args.target_class, args.noise_level, args.dataset, args.label_type, args.device)
 
-  
 
     clean_trainloader=torch.utils.data.DataLoader(clean_trainset, batch_size=args.batch_size, shuffle=True, num_workers=1, pin_memory=True)
     train_loader = torch.utils.data.DataLoader(trainset, batch_size=args.batch_size, shuffle=True, num_workers=1, pin_memory=True)
@@ -123,7 +122,7 @@ def main():
     bootstrap_ep_std = milestones[0] + 5 + 1  # the +1 is because the conditions are defined as ">" or "<" not ">="
 
 
-    guidedMixup_ep =1
+    guidedMixup_ep =105
   
     if args.defence_method=="dp":
         from opacus import PrivacyEngine

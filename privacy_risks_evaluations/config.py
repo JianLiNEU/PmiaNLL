@@ -4,7 +4,7 @@ import  argparse
 def parser_setting():  
       # Training settings
     parser = argparse.ArgumentParser(description='This is the official implementation for the ICML 2019 Unsupervised label noise modeling and loss correction paper. This work is under MIT licence. Please refer to the RunScripts.sh and README.md files for example usages. Consider citing our work if this code is usefull for your project')
-    parser.add_argument('--root-dir', type=str, default='/home/guest100/data/', help='path to CIFAR dir where cifar-10-batches-py/ and cifar-100-python/ are located. If the datasets are not downloaded, they will automatically be and extracted to this path, default: .')
+    parser.add_argument('--root-dir', type=str, default='/home/yinsi_team/guest_yinsi/data/', help='path to CIFAR dir where cifar-10-batches-py/ and cifar-100-python/ are located. If the datasets are not downloaded, they will automatically be and extracted to this path, default: .')
     parser.add_argument('--batch-size', type=int, default=100,
                         help='input batch size for training, default: 128')
     parser.add_argument('--test-batch-size', type=int, default=256,
@@ -41,6 +41,7 @@ def parser_setting():
     # poisoning membership inference setting
     parser.add_argument('--target_class', type=int, default=0,  help="only select a target classes")
     parser.add_argument('--poison_strategy',  type=str, default="target", help="all and target")
+    parser.add_argument('--label_type',  type=str, default="dirty_label", help="all and target")
 
     parser.add_argument('--attack_train_amount', type=int, default=500, help="attack train samples")
     parser.add_argument('--attack_test_amount',  type=int, default=500, help="attack test samples")
@@ -53,7 +54,14 @@ def parser_setting():
                         help='["gaussian, bert"] use different distribution to model the clean and dirty point.')
     parser.add_argument('--synthemic_samples', type=int, default=0, 
                         help='If 1, implement the Poisoning mmebership inference attacks of NDSS 2025')
-    
+
+
+    #   LIRA setting attack
+
+    parser.add_argument('--pkeep', type=float, default=0.7, help='Probability to keep examples.')
+    parser.add_argument('--num_experiments', type=int, default=16, help='Number of shadow model')
+    parser.add_argument('--experiments', type=int, default=0, help='the shadow model id ')
+
     args = parser.parse_args()
 
 
