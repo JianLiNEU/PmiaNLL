@@ -247,16 +247,6 @@ def track_training_loss(args, model, device, train_loader, epoch, bmm_model1, bm
         idx_loss.detach_()
         all_losses = torch.cat((all_losses, idx_loss.cpu()))
 
-
-        # # probs = prediction.clone()
-        # probs.detach_()
-        # all_probs = torch.cat((all_probs, probs.cpu()))
-        # arg_entr = torch.max(prediction, dim=1)[1]
-        # arg_entr = F.nll_loss(prediction.float(), arg_entr.to(device), reduction='none')
-        # arg_entr.detach_()
-        # all_argmaxXentropy = torch.cat((all_argmaxXentropy, arg_entr.cpu()))
-        # The middle result of the model output
-
         mid_inter=model(data, lin=0, lout=6)
         mid_inter.detach_()
         all_mid_inter=torch.cat((all_mid_inter, mid_inter.cpu()))
